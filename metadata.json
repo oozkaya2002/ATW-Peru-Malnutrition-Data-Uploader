@@ -1,0 +1,8 @@
+{
+  "name": "Peru Malnutrition Project Data Uploader",
+  "description": "An AI-powered utility for the Peru Malnutrition Project to process handwritten pediatric medical checkup forms, extract vital health fields, automatically calculate WHO/CDC growth percentiles, audit data outliers, and directly sync data to Google Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
