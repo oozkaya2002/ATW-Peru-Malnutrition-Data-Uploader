@@ -290,7 +290,7 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
       const prompt = "Please process this medical form image. Parse all handwritten fields, compute child ages, calculate percentiles (WHO for <=5 yrs, CDC for 5-20 yrs, N/A for >20 yrs) for height/stature, weight, and MUAC, and check for illogical clinical outliers or reading errors.";
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-3.1-flash-lite",
         contents: { parts: [imagePart, { text: prompt }] },
         config: {
           systemInstruction,
