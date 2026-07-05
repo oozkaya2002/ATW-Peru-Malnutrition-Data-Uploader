@@ -234,11 +234,15 @@ async function startServer() {
     try {
       const { image, mimeType } = req.body;
 
+      console.log(`[Backend Log] POST /api/parse-form called. Payload size: ${image ? Math.round(image.length * 3 / 4 / 1024) : 0} KB, MimeType: ${mimeType || "unspecified"}`);
+
       if (!image) {
+        console.error("[Backend Log] No image data provided in request body.");
         return res.status(400).json({ error: "No image data provided" });
       }
 
       if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === "MY_GEMINI_API_KEY") {
+        console.error("[Backend Log] GEMINI_API_KEY is missing or contains default placeholder.");
         return res.status(500).json({
           error: "API Key is not configured. Please configure your GEMINI_API_KEY in the Secrets panel in the AI Studio UI.",
           isApiKeyMissing: true
@@ -254,9 +258,11 @@ async function startServer() {
         (image && (image.startsWith("AAAAIGZ0eXBoZWlj") || image.startsWith("AAAAIGZ0eXBoZWlm") || image.startsWith("AAAAFnZ0eXBoZWlj") || image.startsWith("AAAAGGZ0eXBoZWlj") || image.startsWith("AAAAGGZ0eXBoZWlm")))
       );
 
+      console.log(`[Backend Log] File detected as HEIC/HEIF: ${isHeic}`);
+
       if (isHeic) {
         try {
-          console.log("Server-side HEIC conversion triggered...");
+          console.log("[Backend Log] Server-side HEIC conversion triggered...");
           const inputBuffer = Buffer.from(image, "base64");
           const outputBuffer = await heicConvert({
             buffer: inputBuffer,
@@ -266,9 +272,9 @@ async function startServer() {
           activeImageData = outputBuffer.toString("base64");
           activeMimeType = "image/jpeg";
           convertedImageBase64 = `data:image/jpeg;base64,${activeImageData}`;
-          console.log("Server-side HEIC conversion succeeded!");
+          console.log("[Backend Log] Server-side HEIC conversion succeeded! Converted image size:", Math.round(activeImageData.length * 3 / 4 / 1024), "KB");
         } catch (err: any) {
-          console.error("Server-side HEIC conversion failed:", err);
+          console.error("[Backend Log] Server-side HEIC conversion failed:", err);
         }
       }
 
@@ -316,8 +322,10 @@ Crucially, you MUST audit the extracted data for correctness:
 
 Ensure all parsed fields match the handwritten data as closely as possible. If a value is missing or completely illegible on the sheet, return null for numbers or 'N/A' / empty for strings and flag it in validation_flags.`;
 
+      console.log("[Backend Log] Preparing to invoke Gemini model (gemini-3.1-flash-lite) for form extraction...");
       const prompt = "Please process this medical form image. Parse all handwritten fields, compute child ages, calculate percentiles (WHO for <=5 yrs, CDC for 5-20 yrs, N/A for >20 yrs) for height/stature, weight, and MUAC, and check for illogical clinical outliers or reading errors.";
 
+      const startTime = Date.now();
       const response = await ai.models.generateContent({
         model: "gemini-3.1-flash-lite",
         contents: { parts: [imagePart, { text: prompt }] },
@@ -328,13 +336,19 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
           temperature: 0.1, // low temperature for high extraction accuracy
         },
       });
+      const duration = Date.now() - startTime;
+      console.log(`[Backend Log] Gemini model response received in ${duration}ms.`);
 
       if (!response.text) {
+        console.error("[Backend Log] No text returned from Gemini API response.");
         throw new Error("No text returned from Gemini");
       }
 
+      console.log("[Backend Log] Parsing Gemini response text as JSON...");
       const extractedData = JSON.parse(response.text.trim());
+      console.log(`[Backend Log] Extraction complete. Raw patient name extracted: ${extractedData.nombre}`);
 
+      console.log("[Backend Log] Performing post-processing sanitization and mappings...");
       // Post-processing string field sanitization and date standardizations
       const stringFieldsToClean = [
         "nombre", "sexo", "comunidad", "escuela", "alergias", "medicamentos_actuales",
@@ -350,10 +364,14 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
       }
 
       // Standardize to strict single choice of 5 possible community values
+      const originalComunidad = extractedData.comunidad;
       extractedData.comunidad = mapCommunity(extractedData.comunidad);
+      console.log(`[Backend Log] Community mapped: '${originalComunidad}' -> '${extractedData.comunidad}'`);
 
       // Standardize to strict single choice of 5 possible doctors
+      const originalDoctor = extractedData.nombre_doctor;
       extractedData.nombre_doctor = mapDoctor(extractedData.nombre_doctor);
+      console.log(`[Backend Log] Doctor mapped: '${originalDoctor}' -> '${extractedData.nombre_doctor}'`);
 
       // Standardize allergies to "None" if empty or none reported
       extractedData.alergias = mapAllergies(extractedData.alergias);
@@ -374,7 +392,9 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
 
       // Standardize dates
       if (extractedData.dob) {
+        const originalDob = extractedData.dob;
         extractedData.dob = standardizeDate(extractedData.dob);
+        console.log(`[Backend Log] DOB standardized: '${originalDob}' -> '${extractedData.dob}'`);
       }
       if (extractedData.ultima_visita) {
         if (/^\d+[-/.]\d+[-/.]\d+$/.test(extractedData.ultima_visita.trim())) {
@@ -387,6 +407,7 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
       // programmatically calculate exact Z-scores and percentiles using the LMS tables and SAS math logic
       if (extractedData.dob && extractedData.sexo) {
         try {
+          console.log(`[Backend Log] Triggering programmatic pediatric growth calculation. DOB=${extractedData.dob}, Sex=${extractedData.sexo}, Height=${extractedData.altura_cm}, Weight=${extractedData.peso_kg}, MUAC=${extractedData.muac_cm}`);
           const calculatedMetrics = calculateGrowthMetrics(
             extractedData.dob,
             extractedData.ultima_visita || "",
@@ -402,20 +423,23 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
           extractedData.percentile_height_for_age = calculatedMetrics.percentile_height_for_age;
           extractedData.percentile_muac_for_age = calculatedMetrics.percentile_muac_for_age;
           extractedData.percentile_explanations = calculatedMetrics.percentile_explanations;
+          console.log(`[Backend Log] Programmatic metrics: AgeY=${extractedData.calculated_age_years?.toFixed(2)}, Wt%=${extractedData.percentile_weight_for_age}, Ht%=${extractedData.percentile_height_for_age}, MUAC%=${extractedData.percentile_muac_for_age}`);
         } catch (calcErr) {
-          console.error("Error during programmatic growth calculation:", calcErr);
+          console.error("[Backend Log] Error during programmatic growth calculation:", calcErr);
         }
       }
 
       // Filter out validation flags for missing values of fields that are NOT the 8 core fields
       const coreFields = ["nombre", "dob", "sexo", "comunidad", "altura_cm", "peso_kg", "temperatura_c", "muac_cm"];
       if (extractedData.validation_flags) {
+        const beforeCount = extractedData.validation_flags.length;
         extractedData.validation_flags = extractedData.validation_flags.filter((flag: any) => {
           if (flag.issue_type === "missing_value") {
             return coreFields.includes(flag.field);
           }
           return true;
         });
+        console.log(`[Backend Log] Filtered missing values flags. Count reduced from ${beforeCount} to ${extractedData.validation_flags.length}`);
       }
 
       // Perform a secondary programmatic validation to catch common human writing slips
@@ -457,6 +481,7 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
 
       // Merge programmatic flags into validation flags
       if (programmaticFlags.length > 0) {
+        console.log(`[Backend Log] Appending ${programmaticFlags.length} programmatic validation flags...`);
         if (!extractedData.validation_flags) {
           extractedData.validation_flags = [];
         }
@@ -471,13 +496,19 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
         }
       }
 
+      console.log(`[Backend Log] Final validation flags count: ${extractedData.validation_flags?.length || 0}`);
+      if (extractedData.validation_flags?.length > 0) {
+        console.log(`[Backend Log] Flagged fields:`, extractedData.validation_flags.map((f: any) => `${f.field} (${f.severity})`));
+      }
+
       if (convertedImageBase64) {
         extractedData.convertedImage = convertedImageBase64;
       }
 
+      console.log(`[Backend Log] /api/parse-form request succeeded for ${extractedData.nombre}. Returning parsed JSON.`);
       res.json(extractedData);
     } catch (error: any) {
-      console.error("Error parsing form:", error);
+      console.error("[Backend Log] Critical error during /api/parse-form handling:", error);
       res.status(500).json({ error: error.message || "An error occurred while processing the form" });
     }
   });
@@ -486,6 +517,7 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
   app.post("/api/calculate-metrics", (req, res) => {
     try {
       const { dob, ultima_visita, sexo, altura_cm, peso_kg, muac_cm } = req.body;
+      console.log(`[Backend Log] POST /api/calculate-metrics triggered. DOB=${dob}, VisitDate=${ultima_visita}, Sex=${sexo}, Height=${altura_cm}, Weight=${peso_kg}, MUAC=${muac_cm}`);
       const metrics = calculateGrowthMetrics(
         dob,
         ultima_visita || "",
@@ -494,9 +526,10 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
         peso_kg !== undefined ? peso_kg : null,
         muac_cm !== undefined ? muac_cm : null
       );
+      console.log(`[Backend Log] programmatically recalculated metrics: Wt%=${metrics.percentile_weight_for_age}, Ht%=${metrics.percentile_height_for_age}, MUAC%=${metrics.percentile_muac_for_age}`);
       res.json(metrics);
     } catch (error: any) {
-      console.error("Error calculating growth metrics on backend:", error);
+      console.error("[Backend Log] Error calculating growth metrics on backend:", error);
       res.status(500).json({ error: error.message || "An error occurred during calculation" });
     }
   });

@@ -37,46 +37,16 @@ export default function App() {
 
   // Handle uploading and parsing files
   const handleFilesSelected = async (files: File[]) => {
+    console.log(`[Frontend Log] handleFilesSelected triggered with ${files.length} file(s).`);
     setIsProcessing(true);
     setAppError(null);
-
-    // Convert HEIC/HEIF files to standard JPEG client-side so they display and send properly
-    const processedFiles: File[] = [];
-    for (const file of files) {
-      if (
-        file.name.toLowerCase().endsWith('.heic') ||
-        file.name.toLowerCase().endsWith('.heif') ||
-        file.type === 'image/heic' ||
-        file.type === 'image/heif'
-      ) {
-        try {
-          const heic2any = (await import('heic2any')).default;
-          const conversionResult = await heic2any({
-            blob: file,
-            toType: 'image/jpeg',
-            quality: 0.8
-          });
-          const blob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
-          const jpegFile = new File(
-            [blob],
-            file.name.replace(/\.(heic|heif)$/i, '.jpg'),
-            { type: 'image/jpeg' }
-          );
-          processedFiles.push(jpegFile);
-        } catch (err) {
-          console.error('HEIC conversion failed, using original file:', err);
-          processedFiles.push(file);
-        }
-      } else {
-        processedFiles.push(file);
-      }
-    }
 
     const pendingRecords: MedicalRecord[] = [];
 
     // Pre-insert pending placeholders for visual streaming feedback
-    for (const file of processedFiles) {
+    for (const file of files) {
       const id = 'rec-' + Math.random().toString(36).substr(2, 9);
+      console.log(`[Frontend Log] Creating placeholder with ID ${id} for file: ${file.name} (${file.type || "unknown mime"}, ${file.size} bytes)`);
       const recordPlaceholder: MedicalRecord = {
         id,
         imageName: file.name,
@@ -123,12 +93,15 @@ export default function App() {
     setRecords(prev => [...prev, ...pendingRecords]);
 
     // Process each file sequentially to avoid overloading rate limits
-    for (let i = 0; i < processedFiles.length; i++) {
-      const file = processedFiles[i];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
       const placeholder = pendingRecords[i];
 
       try {
+        console.log(`[Frontend Log] Starting parsing for file ${i + 1}/${files.length}: ${file.name}`);
+        console.log(`[Frontend Log] Converting ${file.name} to base64...`);
         const base64Image = await fileToBase64(file);
+        console.log(`[Frontend Log] Sending base64 payload to /api/parse-form for ${file.name}`);
         
         const response = await fetch('/api/parse-form', {
           method: 'POST',
@@ -139,15 +112,18 @@ export default function App() {
           })
         });
 
+        console.log(`[Frontend Log] Received response status ${response.status} from server for ${file.name}`);
         const data = await response.json();
 
         if (!response.ok) {
+          console.error(`[Frontend Log] Server parsing failed for ${file.name}. Response error:`, data.error);
           if (data.isApiKeyMissing) {
             setIsApiKeyMissing(true);
           }
           throw new Error(data.error || 'Server error during extraction');
         }
 
+        console.log(`[Frontend Log] Successfully parsed ${file.name}. Patient extracted: ${data.nombre}`);
         // Update the state with the extracted data
         setRecords(prev => prev.map(rec => {
           if (rec.id === placeholder.id) {
@@ -162,7 +138,7 @@ export default function App() {
         }));
 
       } catch (err: any) {
-        console.error('Error parsing file:', err);
+        console.error(`[Frontend Log] Error parsing file ${file.name}:`, err);
         setRecords(prev => prev.map(rec => {
           if (rec.id === placeholder.id) {
             return {
@@ -178,14 +154,18 @@ export default function App() {
       }
     }
 
+    console.log('[Frontend Log] Completed processing of all files in batch.');
     setIsProcessing(false);
   };
 
   // Recalculate percentiles for a record if the DOB, height, or weight were corrected by the auditor
   const handleRecalculatePercentiles = async (currentData: MedicalRecord) => {
+    console.log(`[Frontend Log] handleRecalculatePercentiles triggered for patient: ${currentData.nombre} (ID: ${currentData.id})`);
+    console.log(`[Frontend Log] Target variables for recalculation: DOB=${currentData.dob}, VisitDate=${currentData.ultima_visita}, Sex=${currentData.sexo}, Height=${currentData.altura_cm}cm, Weight=${currentData.peso_kg}kg, MUAC=${currentData.muac_cm}cm`);
     setIsRecalculating(true);
     try {
       // Calculate growth metrics using the server-side API endpoint that uses CSV LMS tables
+      console.log(`[Frontend Log] Sending POST request to /api/calculate-metrics...`);
       const response = await fetch("/api/calculate-metrics", {
         method: "POST",
         headers: {
@@ -201,11 +181,13 @@ export default function App() {
         }),
       });
 
+      console.log(`[Frontend Log] Received recalculation response status ${response.status}`);
       if (!response.ok) {
         throw new Error("Failed to recalculate metrics via server API");
       }
 
       const metrics = await response.json();
+      console.log(`[Frontend Log] Programmatic metrics recalculated successfully:`, metrics);
 
       // Update current data state with exact recalculated values
       setRecords(prev => prev.map(rec => {
@@ -234,10 +216,11 @@ export default function App() {
         percentile_explanations: metrics.percentile_explanations
       } : null);
 
+      console.log(`[Frontend Log] Component state successfully updated for patient: ${currentData.nombre}`);
       // Delay slightly for high quality UI feel
       await new Promise(resolve => setTimeout(resolve, 600));
     } catch (err) {
-      console.error(err);
+      console.error(`[Frontend Log] Error during recalculation:`, err);
     } finally {
       setIsRecalculating(false);
     }
@@ -259,8 +242,13 @@ export default function App() {
 
   // Export clean CSV matches the template
   const handleExportCSV = () => {
+    console.log(`[Frontend Log] handleExportCSV triggered.`);
     const successRecords = records.filter(r => r.status === 'success');
-    if (successRecords.length === 0) return;
+    console.log(`[Frontend Log] Total success records available for export: ${successRecords.length}`);
+    if (successRecords.length === 0) {
+      console.warn(`[Frontend Log] Export cancelled - No parsed records are present.`);
+      return;
+    }
 
     // Define columns based on the exact campaign sheet template fields requested
     const headers = [
