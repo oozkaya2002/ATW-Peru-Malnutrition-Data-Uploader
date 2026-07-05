@@ -29,7 +29,13 @@ export default function UploadZone({ onFilesSelected, isProcessing }: UploadZone
       const files: File[] = [];
       for (let i = 0; i < e.dataTransfer.files.length; i++) {
         const file = e.dataTransfer.files[i];
-        if (file.type.startsWith('image/')) {
+        if (
+          file.type.startsWith('image/') || 
+          file.name.toLowerCase().endsWith('.heic') || 
+          file.name.toLowerCase().endsWith('.heif') ||
+          file.type === 'image/heic' ||
+          file.type === 'image/heif'
+        ) {
           files.push(file);
         }
       }
@@ -45,7 +51,13 @@ export default function UploadZone({ onFilesSelected, isProcessing }: UploadZone
       const files: File[] = [];
       for (let i = 0; i < e.target.files.length; i++) {
         const file = e.target.files[i];
-        if (file.type.startsWith('image/')) {
+        if (
+          file.type.startsWith('image/') || 
+          file.name.toLowerCase().endsWith('.heic') || 
+          file.name.toLowerCase().endsWith('.heif') ||
+          file.type === 'image/heic' ||
+          file.type === 'image/heif'
+        ) {
           files.push(file);
         }
       }
@@ -79,7 +91,7 @@ export default function UploadZone({ onFilesSelected, isProcessing }: UploadZone
           type="file"
           className="hidden"
           multiple
-          accept="image/*"
+          accept="image/*,.heic,.heif"
           onChange={handleChange}
           disabled={isProcessing}
         />
@@ -96,7 +108,7 @@ export default function UploadZone({ onFilesSelected, isProcessing }: UploadZone
         </p>
         <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-slate-400 font-medium">
           <span className="flex items-center gap-1">
-            <ImageIcon className="w-3.5 h-3.5" /> PNG, JPG, JPEG
+            <ImageIcon className="w-3.5 h-3.5" /> PNG, JPG, JPEG, HEIC
           </span>
           <span>•</span>
           <span>Supports batch uploading</span>

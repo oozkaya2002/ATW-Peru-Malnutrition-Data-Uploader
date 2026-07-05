@@ -1,6 +1,8 @@
 // Pediatric growth percentile and Z-score calculations using official WHO and CDC LMS data.
 // Based on WHO Anthro standards (for age <= 5 years) and CDC Growth Charts (for age 5 to 20 years).
 
+import { loadWHOMilestones, loadCDCStatureMilestones, loadCDCWeightMilestones } from "./csvLoader";
+
 export interface GrowthMetricsResult {
   calculated_age_months: number;
   calculated_age_years: number;
@@ -10,9 +12,9 @@ export interface GrowthMetricsResult {
   percentile_explanations: string;
 }
 
-// Full WHO Boys milestone rows (Sex = 1, age in days)
+// Full WHO Boys milestone rows (Sex = 1, age in days) - FALLBACK DATASET
 // Combines the user-provided day 0, 1, and 91-96 rows with standard milestones up to 5 years (1825 days).
-const WHO_BOYS_MILESTONES = [
+const WHO_BOYS_MILESTONES_FALLBACK = [
   { agedays: 0, armc_l: 1.0, armc_m: 10.2, armc_s: 0.08, wei_l: 0.03686, wei_m: 3.3464, wei_s: 0.14602, len_l: 1.0, len_m: 49.8842, len_s: 0.03795 },
   { agedays: 1, armc_l: 1.0, armc_m: 10.2, armc_s: 0.08, wei_l: 0.03656, wei_m: 3.3174, wei_s: 0.14693, len_l: 1.0, len_m: 50.0601, len_s: 0.03785 },
   { agedays: 91, armc_l: 0.3933, armc_m: 13.4779, armc_s: 0.07474, wei_l: 0.02918, wei_m: 6.369, wei_s: 0.11732, len_l: 1.0, len_m: 61.4013, len_s: 0.03329 },
@@ -33,9 +35,9 @@ const WHO_BOYS_MILESTONES = [
   { agedays: 1825, armc_l: 0.20, armc_m: 15.8, armc_s: 0.08, wei_l: -0.38, wei_m: 18.3, wei_s: 0.125, len_l: 1.0, len_m: 107.9, len_s: 0.041 }
 ];
 
-// CDC Stature-for-age milestone rows (Boys, age in months)
+// CDC Stature-for-age milestone rows (Boys, age in months) - FALLBACK DATASET
 // Combines user-provided months 24 to 29.5 with standard milestones up to 20 years (240 months).
-const CDC_STATURE_BOYS_MILESTONES = [
+const CDC_STATURE_BOYS_MILESTONES_FALLBACK = [
   { agemos: 24, l: 0.941523967, m: 86.45220101, s: 0.040321528 },
   { agemos: 24.5, l: 1.00720807, m: 86.86160934, s: 0.040395626 },
   { agemos: 25.5, l: 0.837251351, m: 87.65247282, s: 0.040577525 },
@@ -65,9 +67,9 @@ const CDC_STATURE_BOYS_MILESTONES = [
   { agemos: 240, l: -0.4, m: 176.8, s: 0.05 }
 ];
 
-// CDC Weight-for-age milestone rows (Boys, age in months)
+// CDC Weight-for-age milestone rows (Boys, age in months) - FALLBACK DATASET
 // Combines user-provided months 24 to 29.5 with standard milestones up to 20 years (240 months).
-const CDC_WEIGHT_BOYS_MILESTONES = [
+const CDC_WEIGHT_BOYS_MILESTONES_FALLBACK = [
   { agemos: 24, l: -0.20615245, m: 12.6707633, s: 0.108125811 },
   { agemos: 24.5, l: -0.216501213, m: 12.74154396, s: 0.108166006 },
   { agemos: 25.5, l: -0.239790488, m: 12.88102276, s: 0.108274706 },
@@ -96,6 +98,53 @@ const CDC_WEIGHT_BOYS_MILESTONES = [
   // 20 years (240 months)
   { agemos: 240, l: -1.8, m: 70.5, s: 0.18 }
 ];
+
+// Safe runtime loading of milestones from CSV with memory cache and local fallbacks
+let loadedWHOMilestones: any[] | null = null;
+let loadedCDCStatureMilestones: any[] | null = null;
+let loadedCDCWeightMilestones: any[] | null = null;
+
+function getWhoMilestones() {
+  if (!loadedWHOMilestones) {
+    try {
+      loadedWHOMilestones = loadWHOMilestones();
+    } catch (e) {
+      console.warn("Could not load WHO milestones from CSV, using fallback:", e);
+    }
+    if (!loadedWHOMilestones || loadedWHOMilestones.length === 0) {
+      loadedWHOMilestones = WHO_BOYS_MILESTONES_FALLBACK;
+    }
+  }
+  return loadedWHOMilestones;
+}
+
+function getCdcStatureMilestones() {
+  if (!loadedCDCStatureMilestones) {
+    try {
+      loadedCDCStatureMilestones = loadCDCStatureMilestones();
+    } catch (e) {
+      console.warn("Could not load CDC stature milestones from CSV, using fallback:", e);
+    }
+    if (!loadedCDCStatureMilestones || loadedCDCStatureMilestones.length === 0) {
+      loadedCDCStatureMilestones = CDC_STATURE_BOYS_MILESTONES_FALLBACK;
+    }
+  }
+  return loadedCDCStatureMilestones;
+}
+
+function getCdcWeightMilestones() {
+  if (!loadedCDCWeightMilestones) {
+    try {
+      loadedCDCWeightMilestones = loadCDCWeightMilestones();
+    } catch (e) {
+      console.warn("Could not load CDC weight milestones from CSV, using fallback:", e);
+    }
+    if (!loadedCDCWeightMilestones || loadedCDCWeightMilestones.length === 0) {
+      loadedCDCWeightMilestones = CDC_WEIGHT_BOYS_MILESTONES_FALLBACK;
+    }
+  }
+  return loadedCDCWeightMilestones;
+}
 
 // Helper to scale/adjust LMS tables for girls (Sex = 2)
 function getGenderAdjustedTable(boysTable: any[], sex: number, isWeight: boolean, isHeight: boolean, isMuac: boolean) {
@@ -319,7 +368,7 @@ export function calculateGrowthMetrics(
     explanations = `Patient is ${ageYears.toFixed(1)} years old. Pediatric growth percentiles (WHO/CDC) are only applicable up to age 20.`;
   } else if (ageYears <= 5) {
     // Rely on WHO Growth Standards (0 to 60 months / 1825 days)
-    const whoAdjustedTable = getGenderAdjustedTable(WHO_BOYS_MILESTONES, sex, true, true, true);
+    const whoAdjustedTable = getGenderAdjustedTable(getWhoMilestones(), sex, true, true, true);
     const lmsRow = interpolateLMS(whoAdjustedTable, "agedays", ageDays);
     
     let explanationsParts: string[] = [];
@@ -358,7 +407,7 @@ export function calculateGrowthMetrics(
     let explanationsParts: string[] = [];
     
     if (peso_kg !== null && peso_kg > 0) {
-      const cdcWeightAdjusted = getGenderAdjustedTable(CDC_WEIGHT_BOYS_MILESTONES, sex, true, false, false);
+      const cdcWeightAdjusted = getGenderAdjustedTable(getCdcWeightMilestones(), sex, true, false, false);
       const interp = interpolateLMS(cdcWeightAdjusted, "agemos", ageMonths);
       const z = calculateZScore(peso_kg, interp.l, interp.m, interp.s, false); // false = CDC standard
       const pct = probnorm(z) * 100.0;
@@ -367,7 +416,7 @@ export function calculateGrowthMetrics(
     }
     
     if (altura_cm !== null && altura_cm > 0) {
-      const cdcStatureAdjusted = getGenderAdjustedTable(CDC_STATURE_BOYS_MILESTONES, sex, false, true, false);
+      const cdcStatureAdjusted = getGenderAdjustedTable(getCdcStatureMilestones(), sex, false, true, false);
       const interp = interpolateLMS(cdcStatureAdjusted, "agemos", ageMonths);
       const z = calculateZScore(altura_cm, interp.l, interp.m, interp.s, false); // false = CDC standard
       const pct = probnorm(z) * 100.0;

@@ -44,6 +44,49 @@ export default function FormDataTable({ records, onViewDetails, onDeleteRecord }
     return 'px-4 py-3 text-sm font-medium font-sans bg-amber-50 text-amber-700 border-x border-amber-200/60';
   };
 
+  const getStatusNotesText = (record: MedicalRecord): string => {
+    if (record.status === 'processing') return 'Extracting clinical data from handwritten intake sheet...';
+    if (record.status === 'failed') return record.errorMsg || 'Failed to process sheet.';
+    if (record.status === 'success') {
+      if (record.validation_flags.length === 0) {
+        return 'All core fields are fully complete, consistent, and within standard clinical ranges.';
+      }
+      return record.validation_flags.map(f => `${f.field.toUpperCase()}: ${f.description}`).join('; ');
+    }
+    return '';
+  };
+
+  const getStatusNotesElement = (record: MedicalRecord) => {
+    if (record.status === 'processing') {
+      return <span className="text-indigo-500 italic font-medium">Analyzing source image...</span>;
+    }
+    if (record.status === 'failed') {
+      return <span className="text-rose-600 font-semibold">{record.errorMsg || 'Processing failed'}</span>;
+    }
+    if (record.status === 'success') {
+      if (record.validation_flags.length === 0) {
+        return <span className="text-indigo-600 font-medium">No issues detected</span>;
+      }
+      
+      const firstFlag = record.validation_flags[0];
+      const count = record.validation_flags.length;
+      
+      return (
+        <div className="flex flex-col gap-0.5 max-w-[200px]">
+          <span className={`font-semibold text-xs truncate ${firstFlag.severity === 'red' ? 'text-rose-700 font-sans' : 'text-amber-700 font-sans'}`}>
+            {firstFlag.description}
+          </span>
+          {count > 1 && (
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-sans">
+              + {count - 1} more issue{count - 1 > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="w-full bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
       {/* Search and Filters bar */}
@@ -112,6 +155,7 @@ export default function FormDataTable({ records, onViewDetails, onDeleteRecord }
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
                 <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest font-sans">Status</th>
+                <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest font-sans">Status Notes</th>
                 <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest font-sans">Patient Name</th>
                 <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest font-sans">DOB</th>
                 <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest font-sans">Age (Mo/Yr)</th>
@@ -165,6 +209,11 @@ export default function FormDataTable({ records, onViewDetails, onDeleteRecord }
                           Failed
                         </span>
                       )}
+                    </td>
+
+                    {/* Status Notes */}
+                    <td className="px-4 py-3 text-xs font-sans text-slate-500 max-w-[220px]" title={getStatusNotesText(record)}>
+                      {getStatusNotesElement(record)}
                     </td>
 
                     {/* Patient Name */}

@@ -3,7 +3,6 @@ import { MedicalRecord, ValidationFlag } from './types';
 import UploadZone from './components/UploadZone';
 import FormDataTable from './components/FormDataTable';
 import FormDetailModal from './components/FormDetailModal';
-import { calculateGrowthMetrics } from './lib/growthCalculations';
 import { 
   FileText, 
   AlertTriangle, 
@@ -41,10 +40,42 @@ export default function App() {
     setIsProcessing(true);
     setAppError(null);
 
+    // Convert HEIC/HEIF files to standard JPEG client-side so they display and send properly
+    const processedFiles: File[] = [];
+    for (const file of files) {
+      if (
+        file.name.toLowerCase().endsWith('.heic') ||
+        file.name.toLowerCase().endsWith('.heif') ||
+        file.type === 'image/heic' ||
+        file.type === 'image/heif'
+      ) {
+        try {
+          const heic2any = (await import('heic2any')).default;
+          const conversionResult = await heic2any({
+            blob: file,
+            toType: 'image/jpeg',
+            quality: 0.8
+          });
+          const blob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
+          const jpegFile = new File(
+            [blob],
+            file.name.replace(/\.(heic|heif)$/i, '.jpg'),
+            { type: 'image/jpeg' }
+          );
+          processedFiles.push(jpegFile);
+        } catch (err) {
+          console.error('HEIC conversion failed, using original file:', err);
+          processedFiles.push(file);
+        }
+      } else {
+        processedFiles.push(file);
+      }
+    }
+
     const pendingRecords: MedicalRecord[] = [];
 
     // Pre-insert pending placeholders for visual streaming feedback
-    for (const file of files) {
+    for (const file of processedFiles) {
       const id = 'rec-' + Math.random().toString(36).substr(2, 9);
       const recordPlaceholder: MedicalRecord = {
         id,
@@ -92,8 +123,8 @@ export default function App() {
     setRecords(prev => [...prev, ...pendingRecords]);
 
     // Process each file sequentially to avoid overloading rate limits
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    for (let i = 0; i < processedFiles.length; i++) {
+      const file = processedFiles[i];
       const placeholder = pendingRecords[i];
 
       try {
@@ -124,7 +155,7 @@ export default function App() {
               ...rec,
               ...data,
               status: 'success',
-              imageSrc: placeholder.imageSrc // retain local object URL for preview
+              imageSrc: data.convertedImage || placeholder.imageSrc // retain local object URL or use the server-converted JPEG!
             };
           }
           return rec;
@@ -154,15 +185,27 @@ export default function App() {
   const handleRecalculatePercentiles = async (currentData: MedicalRecord) => {
     setIsRecalculating(true);
     try {
-      // Calculate growth metrics using the exact same robust Z-score calculation module
-      const metrics = calculateGrowthMetrics(
-        currentData.dob,
-        currentData.ultima_visita || "",
-        currentData.sexo,
-        currentData.altura_cm,
-        currentData.peso_kg,
-        currentData.muac_cm
-      );
+      // Calculate growth metrics using the server-side API endpoint that uses CSV LMS tables
+      const response = await fetch("/api/calculate-metrics", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          dob: currentData.dob,
+          ultima_visita: currentData.ultima_visita || "",
+          sexo: currentData.sexo,
+          altura_cm: currentData.altura_cm,
+          peso_kg: currentData.peso_kg,
+          muac_cm: currentData.muac_cm,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to recalculate metrics via server API");
+      }
+
+      const metrics = await response.json();
 
       // Update current data state with exact recalculated values
       setRecords(prev => prev.map(rec => {
@@ -252,7 +295,9 @@ export default function App() {
       'Diagnosis',
       'Rx Prescribed',
       'Notes',
-      'Image Name'
+      'Image Name',
+      'Status',
+      'Status Notes'
     ];
 
     const cleanForCsvCell = (val: any): string => {
@@ -309,6 +354,22 @@ export default function App() {
       const albendazoleCode = rec.albendazole?.toLowerCase().startsWith('s') || rec.albendazole?.toLowerCase().startsWith('y') ? 'Y' : rec.albendazole?.toLowerCase().startsWith('n') ? 'N' : '';
       const redFlag = rec.validation_flags.some(f => f.severity === 'red') ? 'Y' : 'N';
 
+      const hasRedFlags = rec.validation_flags.some(f => f.severity === 'red');
+      const hasYellowFlags = rec.validation_flags.some(f => f.severity === 'yellow');
+      let statusStr = 'Clean';
+      if (hasRedFlags) {
+        statusStr = 'Outliers';
+      } else if (hasYellowFlags) {
+        statusStr = 'Missing';
+      }
+
+      let statusNotesStr = '';
+      if (rec.validation_flags.length === 0) {
+        statusNotesStr = 'All core fields are fully complete, consistent, and within standard clinical ranges.';
+      } else {
+        statusNotesStr = rec.validation_flags.map(f => `${f.field.toUpperCase()}: ${f.description}`).join('; ');
+      }
+
       return [
         escape(rec.nombre),
         escape(rec.dob),
@@ -341,7 +402,9 @@ export default function App() {
         escape(rec.diagnostico),
         escape(rec.medicamentos_recetados),
         escape(rec.notas),
-        escape(rec.imageName)
+        escape(rec.imageName),
+        escape(statusStr),
+        escape(statusNotesStr)
       ].join(',');
     });
 

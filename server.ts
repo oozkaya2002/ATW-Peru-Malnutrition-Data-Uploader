@@ -5,6 +5,8 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { calculateGrowthMetrics } from "./src/lib/growthCalculations";
+// @ts-ignore
+import heicConvert from "heic-convert";
 
 dotenv.config();
 
@@ -243,11 +245,38 @@ async function startServer() {
         });
       }
 
+      let activeMimeType = mimeType || "image/jpeg";
+      let activeImageData = image;
+      let convertedImageBase64: string | undefined = undefined;
+
+      const isHeic = (
+        (mimeType && (mimeType.toLowerCase().includes("heic") || mimeType.toLowerCase().includes("heif"))) ||
+        (image && (image.startsWith("AAAAIGZ0eXBoZWlj") || image.startsWith("AAAAIGZ0eXBoZWlm") || image.startsWith("AAAAFnZ0eXBoZWlj") || image.startsWith("AAAAGGZ0eXBoZWlj") || image.startsWith("AAAAGGZ0eXBoZWlm")))
+      );
+
+      if (isHeic) {
+        try {
+          console.log("Server-side HEIC conversion triggered...");
+          const inputBuffer = Buffer.from(image, "base64");
+          const outputBuffer = await heicConvert({
+            buffer: inputBuffer,
+            format: "JPEG",
+            quality: 0.8
+          });
+          activeImageData = outputBuffer.toString("base64");
+          activeMimeType = "image/jpeg";
+          convertedImageBase64 = `data:image/jpeg;base64,${activeImageData}`;
+          console.log("Server-side HEIC conversion succeeded!");
+        } catch (err: any) {
+          console.error("Server-side HEIC conversion failed:", err);
+        }
+      }
+
       // Convert the base64 data to Gemini part format
       const imagePart = {
         inlineData: {
-          mimeType: mimeType || "image/jpeg",
-          data: image,
+          mimeType: activeMimeType,
+          data: activeImageData,
         },
       };
 
@@ -442,10 +471,33 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
         }
       }
 
+      if (convertedImageBase64) {
+        extractedData.convertedImage = convertedImageBase64;
+      }
+
       res.json(extractedData);
     } catch (error: any) {
       console.error("Error parsing form:", error);
       res.status(500).json({ error: error.message || "An error occurred while processing the form" });
+    }
+  });
+
+  // API endpoint to recalculate growth metrics programmatically
+  app.post("/api/calculate-metrics", (req, res) => {
+    try {
+      const { dob, ultima_visita, sexo, altura_cm, peso_kg, muac_cm } = req.body;
+      const metrics = calculateGrowthMetrics(
+        dob,
+        ultima_visita || "",
+        sexo || "",
+        altura_cm !== undefined ? altura_cm : null,
+        peso_kg !== undefined ? peso_kg : null,
+        muac_cm !== undefined ? muac_cm : null
+      );
+      res.json(metrics);
+    } catch (error: any) {
+      console.error("Error calculating growth metrics on backend:", error);
+      res.status(500).json({ error: error.message || "An error occurred during calculation" });
     }
   });
 
