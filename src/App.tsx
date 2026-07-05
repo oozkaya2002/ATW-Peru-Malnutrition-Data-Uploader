@@ -3,6 +3,7 @@ import { MedicalRecord, ValidationFlag } from './types';
 import UploadZone from './components/UploadZone';
 import FormDataTable from './components/FormDataTable';
 import FormDetailModal from './components/FormDetailModal';
+import { calculateGrowthMetrics } from './lib/growthCalculations';
 import { 
   FileText, 
   AlertTriangle, 
@@ -153,155 +154,27 @@ export default function App() {
   const handleRecalculatePercentiles = async (currentData: MedicalRecord) => {
     setIsRecalculating(true);
     try {
-      // Since recalculation depends on Gemini standard estimation on the server,
-      // we can reuse the parse-form endpoint or a lightweight query by providing the metrics.
-      // But we can also make a fast API request or let Gemini recalculate.
-      // Let's call the parse-form API with the updated metrics in text prompt form!
-      // To preserve the context, we will send the record's base64 image along with corrected values.
-      // If imageSrc is an ObjectURL, we can't easily send it to server as base64 again, so we'll pass the current data in a JSON payload.
-      // Let's create an explicit recalculate API route or let Gemini process it with the metrics.
-      // Actually, we can just let Gemini recalculate based on the metrics we provide in a text prompt!
-      // This is fast and highly reliable. Let's make sure the backend server supports a recalculation logic.
-      // Wait, we didn't add a /api/recalculate endpoint, but we can easily call /api/parse-form or write a quick logic.
-      // Wait! We can also calculate it via a smart prompt on the server!
-      // Let's implement a quick client-side recalculation fetch request, or simulate a highly standard LMS interpolation!
-      // Actually, let's implement a backend handler if needed, or we can use our existing /api/parse-form by appending the correction.
-      // Wait, let's look at how we can do it. We can mock a quick fetch to the same API or just calculate it client-side.
-      // Let's do a fast query to the server using the existing image data if available, or we can run a quick simulation.
-      // Let's simulate a standard pediatric calculation with highly robust LMS outputs so it updates instantly!
-      // For children <= 5 years old:
-      // Weight for age:
-      // If male: weight = 12.50kg at 34 months (2.8 years) is 97th.
-      // If female: weight = 12.50kg at 34 months is 98th.
-      // Height for age:
-      // If male: height = 39.2cm at 34 months is <1st percentile.
-      // If height is corrected to 95.0cm at 34 months, it is ~50th percentile!
-      // Let's write a beautiful, smart calculation simulator in JavaScript directly in the app to respond immediately, 
-      // falling back to standard estimates if it's over 20 years old!
-      
-      const dobParts = currentData.dob.split(/[-/.]/);
-      let months = 0;
-      let years = 0;
-      
-      if (dobParts.length === 3) {
-        // Assume format DD/MM/YYYY or YYYY/MM/DD
-        let day = parseInt(dobParts[0]);
-        let month = parseInt(dobParts[1]);
-        let year = parseInt(dobParts[2]);
-        
-        // Let's detect if year is the first element
-        if (year < 100) {
-          // Standard day and year swap
-          if (day > 1000) {
-            const temp = day;
-            day = year;
-            year = temp;
-          }
-        }
-        
-        const birthDate = new Date(year, month - 1, day);
-        const visitParts = currentData.ultima_visita.split(/[-/.]/);
-        let visitDate = new Date();
-        
-        if (visitParts.length === 3) {
-          let vDay = parseInt(visitParts[0]);
-          let vMonth = parseInt(visitParts[1]);
-          let vYear = parseInt(visitParts[2]);
-          if (vYear > 1000) {
-            visitDate = new Date(vYear, vMonth - 1, vDay);
-          }
-        }
-        
-        const diffTime = Math.abs(visitDate.getTime() - birthDate.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        months = diffDays / 30.4375;
-        years = diffDays / 365.25;
-      }
+      // Calculate growth metrics using the exact same robust Z-score calculation module
+      const metrics = calculateGrowthMetrics(
+        currentData.dob,
+        currentData.ultima_visita || "",
+        currentData.sexo,
+        currentData.altura_cm,
+        currentData.peso_kg,
+        currentData.muac_cm
+      );
 
-      let wfa = 'N/A';
-      let hfa = 'N/A';
-      let mfa = 'N/A';
-      let desc = '';
-
-      if (years > 20) {
-        wfa = 'N/A';
-        hfa = 'N/A';
-        mfa = 'N/A';
-        desc = `Patient is ${years.toFixed(1)} years old. Percentiles are not applicable for adults > 20 years.`;
-      } else if (years <= 5) {
-        // WHO standard estimations based on LMS averages
-        const isBoy = currentData.sexo === 'Masculino';
-        
-        // Weight standard estimations
-        if (currentData.peso_kg !== null) {
-          const expectedWeight = isBoy ? (3 + years * 3.5) : (2.8 + years * 3.3); // simple linear pediatric approximation for demo/calculation fallback
-          const ratio = currentData.peso_kg / expectedWeight;
-          if (ratio > 1.3) wfa = '>97th';
-          else if (ratio > 1.15) wfa = '85th-97th';
-          else if (ratio > 0.9) wfa = '15th-85th';
-          else if (ratio > 0.8) wfa = '3rd-15th';
-          else wfa = '<3rd';
-        }
-
-        // Height standard estimations
-        if (currentData.altura_cm !== null) {
-          const expectedHeight = 50 + years * 16; // expectation
-          const ratio = currentData.altura_cm / expectedHeight;
-          if (ratio > 1.1) hfa = '>97th';
-          else if (ratio > 1.05) hfa = '85th-97th';
-          else if (ratio >= 0.95) hfa = '15th-85th';
-          else if (ratio >= 0.9) hfa = '3rd-15th';
-          else hfa = '<3rd';
-        }
-
-        // MUAC estimations
-        if (currentData.muac_cm !== null) {
-          const expectedMuac = 12.5 + (years * 0.8);
-          const ratio = currentData.muac_cm / expectedMuac;
-          if (ratio > 1.2) mfa = '>97th';
-          else if (ratio > 1.05) mfa = '50th-97th';
-          else if (ratio >= 0.95) mfa = '15th-50th';
-          else mfa = '<15th';
-        }
-
-        desc = `Dynamic recalculated WHO standards for a ${isBoy ? 'male' : 'female'} child of ${months.toFixed(0)} months. Expected values: Weight ~${(3 + years * 3.5).toFixed(1)}kg, Height ~${(50 + years * 16).toFixed(0)}cm.`;
-      } else {
-        // CDC estimations (5 - 20 years)
-        const isBoy = currentData.sexo === 'Masculino';
-        if (currentData.peso_kg !== null) {
-          const expectedWeight = 15 + (years - 5) * 4;
-          const ratio = currentData.peso_kg / expectedWeight;
-          if (ratio > 1.25) wfa = '>95th';
-          else if (ratio > 1.1) wfa = '85th-95th';
-          else if (ratio >= 0.9) wfa = '15th-85th';
-          else if (ratio >= 0.8) wfa = '5th-15th';
-          else wfa = '<5th';
-        }
-
-        if (currentData.altura_cm !== null) {
-          const expectedHeight = 100 + (years - 5) * 6;
-          const ratio = currentData.altura_cm / expectedHeight;
-          if (ratio > 1.08) hfa = '>95th';
-          else if (ratio > 1.03) hfa = '85th-95th';
-          else if (ratio >= 0.95) hfa = '15th-85th';
-          else if (ratio >= 0.9) hfa = '5th-15th';
-          else hfa = '<5th';
-        }
-        mfa = 'N/A';
-        desc = `Dynamic recalculated CDC standards for a ${isBoy ? 'male' : 'female'} child of ${years.toFixed(1)} years. Expected values: Weight ~${(15 + (years - 5) * 4).toFixed(1)}kg, Height ~${(100 + (years - 5) * 6).toFixed(0)}cm.`;
-      }
-
-      // Update current data state with recalculated values
+      // Update current data state with exact recalculated values
       setRecords(prev => prev.map(rec => {
         if (rec.id === currentData.id) {
           return {
             ...currentData,
-            calculated_age_months: Math.round(months),
-            calculated_age_years: parseFloat(years.toFixed(2)),
-            percentile_weight_for_age: wfa,
-            percentile_height_for_age: hfa,
-            percentile_muac_for_age: mfa,
-            percentile_explanations: desc
+            calculated_age_months: metrics.calculated_age_months,
+            calculated_age_years: metrics.calculated_age_years,
+            percentile_weight_for_age: metrics.percentile_weight_for_age,
+            percentile_height_for_age: metrics.percentile_height_for_age,
+            percentile_muac_for_age: metrics.percentile_muac_for_age,
+            percentile_explanations: metrics.percentile_explanations
           };
         }
         return rec;
@@ -310,12 +183,12 @@ export default function App() {
       // Update local modal data too
       setSelectedRecord(prev => prev ? {
         ...prev,
-        calculated_age_months: Math.round(months),
-        calculated_age_years: parseFloat(years.toFixed(2)),
-        percentile_weight_for_age: wfa,
-        percentile_height_for_age: hfa,
-        percentile_muac_for_age: mfa,
-        percentile_explanations: desc
+        calculated_age_months: metrics.calculated_age_months,
+        calculated_age_years: metrics.calculated_age_years,
+        percentile_weight_for_age: metrics.percentile_weight_for_age,
+        percentile_height_for_age: metrics.percentile_height_for_age,
+        percentile_muac_for_age: metrics.percentile_muac_for_age,
+        percentile_explanations: metrics.percentile_explanations
       } : null);
 
       // Delay slightly for high quality UI feel

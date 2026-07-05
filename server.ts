@@ -4,6 +4,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { calculateGrowthMetrics } from "./src/lib/growthCalculations";
 
 dotenv.config();
 
@@ -351,6 +352,29 @@ Ensure all parsed fields match the handwritten data as closely as possible. If a
           extractedData.ultima_visita = standardizeDate(extractedData.ultima_visita);
         } else {
           extractedData.ultima_visita = cleanTranscribedText(extractedData.ultima_visita);
+        }
+      }
+
+      // programmatically calculate exact Z-scores and percentiles using the LMS tables and SAS math logic
+      if (extractedData.dob && extractedData.sexo) {
+        try {
+          const calculatedMetrics = calculateGrowthMetrics(
+            extractedData.dob,
+            extractedData.ultima_visita || "",
+            extractedData.sexo,
+            extractedData.altura_cm,
+            extractedData.peso_kg,
+            extractedData.muac_cm
+          );
+
+          extractedData.calculated_age_months = calculatedMetrics.calculated_age_months;
+          extractedData.calculated_age_years = calculatedMetrics.calculated_age_years;
+          extractedData.percentile_weight_for_age = calculatedMetrics.percentile_weight_for_age;
+          extractedData.percentile_height_for_age = calculatedMetrics.percentile_height_for_age;
+          extractedData.percentile_muac_for_age = calculatedMetrics.percentile_muac_for_age;
+          extractedData.percentile_explanations = calculatedMetrics.percentile_explanations;
+        } catch (calcErr) {
+          console.error("Error during programmatic growth calculation:", calcErr);
         }
       }
 
