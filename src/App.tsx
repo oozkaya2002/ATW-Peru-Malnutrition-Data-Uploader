@@ -13,6 +13,7 @@ import {
   Loader2, 
   AlertCircle
 } from 'lucide-react';
+import { time } from 'console';
 
 export default function App() {
   const [records, setRecords] = useState<MedicalRecord[]>([]);
@@ -102,7 +103,9 @@ export default function App() {
         console.log(`[Frontend Log] Converting ${file.name} to base64...`);
         const base64Image = await fileToBase64(file);
         console.log(`[Frontend Log] Sending base64 payload to /api/parse-form for ${file.name}`);
-        
+        console.log(`Sleeping for 3 seconds before sending new data`)
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
         const response = await fetch('/api/parse-form', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
